@@ -1,0 +1,976 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>KinRadar — Posizione Famiglia</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        /* Impostazioni tipografiche e layout a schermo intero per la mappa */
+        html, body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            height: 100%;
+            width: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #0f172a;
+        }
+
+        #map {
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+
+        /* Pin personalizzato a goccia sulla mappa Leaflet */
+        .kin-pin {
+            width: 38px;
+            height: 38px;
+            border-radius: 50% 50% 50% 0;
+            transform: rotate(-45deg);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 3px solid #ffffff;
+            box-shadow: 0 6px 16px rgba(15, 23, 42, 0.35);
+            transition: transform 0.2s ease;
+        }
+
+        .kin-pin span {
+            transform: rotate(45deg);
+            color: #ffffff;
+            font-weight: 800;
+            font-size: 0.9rem;
+            line-height: 1;
+        }
+
+        /* Animazione stato GPS attivo */
+        @keyframes kinPulse {
+            0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.65); }
+            70% { box-shadow: 0 0 0 9px rgba(34, 197, 94, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+        }
+
+        .gps-pulse-active {
+            background-color: #22c55e;
+            animation: kinPulse 1.8s infinite;
+        }
+
+        /* Scrollbar discreta per il pannello familiari */
+        .custom-scroll::-webkit-scrollbar {
+            width: 6px;
+        }
+        .custom-scroll::-webkit-scrollbar-thumb {
+            background-color: rgba(148, 163, 184, 0.45);
+            border-radius: 9999px;
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-900 select-none">
+
+    <!-- SCHERMATA DI ACCESSO / REGISTRAZIONE -->
+    <div id="auth-overlay" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 backdrop-blur-md p-4 overflow-y-auto">
+        <div class="w-full max-w-md rounded-3xl bg-white p-6 sm:p-7 shadow-2xl border border-slate-200 my-auto">
+            <div class="flex items-center justify-between gap-3 mb-5">
+                <div class="flex items-center gap-3">
+                    <div class="w-11 h-11 rounded-2xl bg-blue-600 text-white flex items-center justify-center font-extrabold text-lg shadow-md">
+                        KR
+                    </div>
+                    <div>
+                        <h1 class="text-xl font-extrabold text-slate-900 tracking-tight">KinRadar</h1>
+                        <p class="text-xs text-slate-500">Posizione della famiglia in tempo reale</p>
+                    </div>
+                </div>
+                <span id="mode-pill" class="px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800">
+                    Modalità Locale
+                </span>
+            </div>
+
+            <!-- Schede Accedi / Registrati -->
+            <div class="grid grid-cols-2 gap-1.5 bg-slate-100 p-1 rounded-2xl mb-5">
+                <button type="button" id="tab-login" class="py-2.5 px-3 rounded-xl text-sm font-bold bg-white text-slate-900 shadow-sm transition">
+                    Accedi
+                </button>
+                <button type="button" id="tab-register" class="py-2.5 px-3 rounded-xl text-sm font-bold text-slate-600 hover:text-slate-900 transition">
+                    Registrati
+                </button>
+            </div>
+
+            <!-- Form Account -->
+            <form id="auth-form" class="space-y-3.5">
+                <div id="register-extra" class="hidden space-y-3.5">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">Il tuo nome</label>
+                        <input type="text" id="auth-name" placeholder="Es. Giulia" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div class="grid grid-cols-3 gap-2.5">
+                        <div class="col-span-2">
+                            <label class="block text-xs font-bold text-slate-700 mb-1">Codice Famiglia</label>
+                            <input type="text" id="auth-family" value="famiglia-rossi" placeholder="Es. famiglia-rossi" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">Colore</label>
+                            <input type="color" id="auth-color" value="#2563eb" class="w-full h-[42px] p-1 rounded-xl bg-slate-50 border border-slate-200 cursor-pointer">
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">Email</label>
+                    <input type="email" id="auth-email" required placeholder="tu@esempio.it" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">Password</label>
+                    <input type="password" id="auth-password" required minlength="6" placeholder="Almeno 6 caratteri" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+
+                <button type="submit" id="auth-submit-btn" class="w-full py-3 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white font-bold text-sm shadow-md transition cursor-pointer">
+                    Accedi a KinRadar
+                </button>
+            </form>
+
+            <!-- Accesso rapido Demo / Locale -->
+            <div class="mt-4 pt-4 border-t border-slate-100 flex items-center justify-between gap-2">
+                <p class="text-[11px] text-slate-500 leading-snug">
+                    Vuoi provarlo subito senza configurare il cloud?
+                </p>
+                <button type="button" id="btn-demo-entry" class="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs whitespace-nowrap transition cursor-pointer">
+                    Entra in Demo
+                </button>
+            </div>
+
+            <!-- Configurazione Cloud opzionale -->
+            <details id="cloud-details" class="mt-4 pt-3 border-t border-slate-100">
+                <summary class="text-xs font-bold text-slate-600 cursor-pointer hover:text-slate-900">
+                    Configura Sincronizzazione Cloud (Firebase)
+                </summary>
+                <div class="mt-3 space-y-2.5">
+                    <p class="text-[11px] text-slate-500 leading-relaxed">
+                        Inserisci i parametri del tuo progetto Firebase (Authentication Email/Password + Realtime Database) per sincronizzare account e posizioni tra telefoni diversi.
+                    </p>
+                    <input type="text" id="cfg-api-key" placeholder="API Key (es. AIzaSy...)" class="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs">
+                    <input type="text" id="cfg-auth-domain" placeholder="Auth Domain (es. app.firebaseapp.com)" class="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs">
+                    <input type="url" id="cfg-db-url" placeholder="Database URL (es. https://app-default-rtdb.firebaseio.com)" class="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs">
+                    <input type="text" id="cfg-project-id" placeholder="Project ID" class="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs">
+                    <button type="button" id="btn-save-cloud" class="w-full py-2 px-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs transition cursor-pointer">
+                        Salva Configurazione Cloud
+                    </button>
+                </div>
+            </details>
+        </div>
+    </div>
+
+    <!-- APPLICAZIONE PRINCIPALE MAPPA -->
+    <div id="app-shell" class="relative w-full h-full">
+        <div id="map"></div>
+
+        <!-- Barra superiore flottante -->
+        <header class="fixed top-3 left-3 right-3 sm:top-4 sm:left-4 sm:right-4 z-20 flex flex-wrap items-center justify-between gap-2 pointer-events-none">
+            <div class="pointer-events-auto flex items-center gap-3 bg-slate-900/90 backdrop-blur-md text-white px-3.5 py-2.5 rounded-2xl shadow-xl border border-white/10">
+                <span id="gps-indicator" class="w-2.5 h-2.5 rounded-full bg-slate-400 shrink-0"></span>
+                <div class="min-w-0">
+                    <div class="flex items-center gap-2">
+                        <strong id="header-family" class="text-sm font-bold truncate">famiglia-rossi</strong>
+                        <span id="header-mode" class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-white/15 text-slate-200">Locale</span>
+                    </div>
+                    <p id="header-gps-text" class="text-[11px] text-slate-300 truncate">In attesa del GPS...</p>
+                </div>
+            </div>
+
+            <div class="pointer-events-auto flex items-center gap-2">
+                <button type="button" id="btn-center-me" class="px-3.5 py-2.5 rounded-2xl bg-white hover:bg-slate-50 text-slate-900 font-bold text-xs sm:text-sm shadow-lg border border-slate-200 flex items-center gap-1.5 transition cursor-pointer">
+                    <span>Centra su di me</span>
+                </button>
+                <button type="button" id="btn-open-profile" class="px-3.5 py-2.5 rounded-2xl bg-white hover:bg-slate-50 text-slate-900 font-bold text-xs sm:text-sm shadow-lg border border-slate-200 flex items-center gap-2 transition cursor-pointer">
+                    <span id="header-user-dot" class="w-3 h-3 rounded-full bg-blue-600 inline-block"></span>
+                    <span id="header-user-name" class="max-w-[100px] truncate">Profilo</span>
+                </button>
+            </div>
+        </header>
+
+        <!-- Pannello inferiore Familiari -->
+        <section class="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-2xl z-20 bg-white/95 backdrop-blur-md rounded-t-3xl shadow-2xl border-t border-slate-200 p-4 sm:p-5 max-h-[48vh] flex flex-col">
+            <div class="w-10 h-1 bg-slate-300 rounded-full mx-auto mb-3 shrink-0"></div>
+
+            <div class="flex items-center justify-between gap-2 mb-3 shrink-0">
+                <div>
+                    <h2 class="text-base sm:text-lg font-extrabold text-slate-900">Membri della famiglia</h2>
+                    <p id="members-count-sub" class="text-xs text-slate-500">Tocca un familiare per centrare la mappa</p>
+                </div>
+
+                <button type="button" id="btn-toggle-share" class="px-3.5 py-2 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 hover:bg-emerald-200 transition cursor-pointer">
+                    Condivisione: ON
+                </button>
+            </div>
+
+            <div id="members-list" class="overflow-y-auto custom-scroll space-y-2.5 pr-0.5"></div>
+        </section>
+    </div>
+
+    <!-- MODALE PROFILO PERSONALE & ACCOUNT -->
+    <div id="profile-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-4">
+        <div class="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl border border-slate-200">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-extrabold text-slate-900">Account & Profilo</h3>
+                <button type="button" id="btn-close-profile" class="w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-lg flex items-center justify-center cursor-pointer">&times;</button>
+            </div>
+
+            <div id="profile-account-info" class="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 mb-4"></div>
+
+            <form id="profile-form" class="space-y-3.5">
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">Nome visualizzato</label>
+                    <input type="text" id="edit-profile-name" required class="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm">
+                </div>
+
+                <div class="grid grid-cols-3 gap-2.5">
+                    <div class="col-span-2">
+                        <label class="block text-xs font-bold text-slate-700 mb-1">Codice Famiglia</label>
+                        <input type="text" id="edit-profile-family" required class="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">Colore</label>
+                        <input type="color" id="edit-profile-color" class="w-full h-[42px] p-1 rounded-xl bg-slate-50 border border-slate-200 cursor-pointer">
+                    </div>
+                </div>
+
+                <button type="submit" class="w-full py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm transition cursor-pointer">
+                    Salva Modifiche
+                </button>
+            </form>
+
+            <div class="mt-4 pt-4 border-t border-slate-100 flex items-center justify-between gap-2">
+                <button type="button" id="btn-switch-account" class="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs transition cursor-pointer">
+                    Cambia / Configura Account
+                </button>
+                <button type="button" id="btn-logout" class="px-3.5 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs transition cursor-pointer">
+                    Esci
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Box notifiche non bloccante -->
+    <div id="toast-box" class="hidden fixed top-20 left-1/2 -translate-x-1/2 z-[60] bg-slate-900 text-white text-xs sm:text-sm font-semibold px-4 py-2.5 rounded-2xl shadow-xl border border-white/10"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
+        import {
+            getAuth,
+            onAuthStateChanged,
+            signInWithEmailAndPassword,
+            createUserWithEmailAndPassword,
+            signOut
+        } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+        import {
+            getDatabase,
+            ref,
+            set,
+            get,
+            onValue,
+            update
+        } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js';
+
+        // Chiavi di archiviazione locale (inclusi account locali e configurazione cloud)
+        const KEYS = {
+            cloudCfg: 'kinradar_cloud_cfg_v1',
+            localAccounts: 'kinradar_local_accounts_v1',
+            activeSession: 'kinradar_active_session_v1',
+            sharePref: 'kinradar_share_pref_v1'
+        };
+
+        // Familiari di esempio per arricchire la mappa in modalità locale/demo
+        const DEMO_FAMILY_PEERS = [
+            {
+                uid: 'peer_elena',
+                name: 'Elena',
+                color: '#ec4899',
+                familyCode: 'famiglia-rossi',
+                offsetLat: 0.0085,
+                offsetLng: 0.0112,
+                updatedAt: Date.now() - 45000
+            },
+            {
+                uid: 'peer_luca',
+                name: 'Luca',
+                color: '#10b981',
+                familyCode: 'famiglia-rossi',
+                offsetLat: -0.0064,
+                offsetLng: 0.0091,
+                updatedAt: Date.now() - 150000
+            }
+        ];
+
+        let cloudConfig = JSON.parse(localStorage.getItem(KEYS.cloudCfg) || 'null');
+        let fbAuth = null;
+        let fbDb = null;
+        let isCloudMode = false;
+
+        let currentSession = JSON.parse(localStorage.getItem(KEYS.activeSession) || 'null');
+        let sharingEnabled = localStorage.getItem(KEYS.sharePref) !== 'false';
+        let authTab = 'login';
+
+        let myCoords = {
+            lat: null,
+            lng: null,
+            accuracy: null,
+            updatedAt: null
+        };
+
+        let familyPositions = {};
+        let gpsWatchId = null;
+        let fbUnsubscribe = null;
+        let hasCenteredMap = false;
+
+        // --- NOTIFICHE TOAST ---
+        let toastTimer = null;
+        function showToast(message) {
+            const box = document.getElementById('toast-box');
+            box.textContent = message;
+            box.classList.remove('hidden');
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => box.classList.add('hidden'), 3000);
+        }
+
+        // --- NORMALIZZAZIONE CODICE FAMIGLIA ---
+        function normalizeFamilyCode(raw) {
+            const clean = (raw || 'famiglia-rossi')
+                .trim()
+                .toLowerCase()
+                .replace(/[^a-z0-9-_]/g, '-');
+            return clean || 'famiglia-rossi';
+        }
+
+        // --- INIZIALIZZAZIONE MAPPA LEAFLET ---
+        const map = L.map('map', { zoomControl: false }).setView([41.9028, 12.4964], 13);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '&copy; OpenStreetMap'
+        }).addTo(map);
+        const markersLayer = L.layerGroup().addTo(map);
+
+        // --- CALCOLO DISTANZA (HAVERSINE) ---
+        function formatDistance(lat1, lon1, lat2, lon2) {
+            if ([lat1, lon1, lat2, lon2].some(v => typeof v !== 'number' || Number.isNaN(v))) {
+                return '';
+            }
+            const R = 6371000;
+            const toRad = deg => (deg * Math.PI) / 180;
+            const dLat = toRad(lat2 - lat1);
+            const dLon = toRad(lon2 - lon1);
+            const h =
+                Math.sin(dLat / 2) ** 2 +
+                Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+            const meters = R * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+            if (meters < 1000) return `${Math.round(meters)} m da te`;
+            return `${(meters / 1000).toFixed(1)} km da te`;
+        }
+
+        // --- FORMATTAZIONE ULTIMO AGGIORNAMENTO ---
+        function formatLastSeen(timestamp) {
+            if (!timestamp) return 'In attesa';
+            const sec = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+            if (sec < 20) return 'Aggiornato ora';
+            if (sec < 60) return `${sec} sec fa`;
+            const min = Math.floor(sec / 60);
+            if (min < 60) return `${min} min fa`;
+            const hours = Math.floor(min / 60);
+            if (hours < 24) return `${hours} h fa`;
+            return `${Math.floor(hours / 24)} g fa`;
+        }
+
+        // --- GESTIONE SCHERMATA LOGIN / REGISTRAZIONE ---
+        function setAuthMode(mode) {
+            authTab = mode;
+            const isReg = mode === 'register';
+            document.getElementById('tab-login').className = isReg
+                ? 'py-2.5 px-3 rounded-xl text-sm font-bold text-slate-600 hover:text-slate-900 transition cursor-pointer'
+                : 'py-2.5 px-3 rounded-xl text-sm font-bold bg-white text-slate-900 shadow-sm transition cursor-pointer';
+            document.getElementById('tab-register').className = isReg
+                ? 'py-2.5 px-3 rounded-xl text-sm font-bold bg-white text-slate-900 shadow-sm transition cursor-pointer'
+                : 'py-2.5 px-3 rounded-xl text-sm font-bold text-slate-600 hover:text-slate-900 transition cursor-pointer';
+
+            document.getElementById('register-extra').classList.toggle('hidden', !isReg);
+            document.getElementById('auth-submit-btn').textContent = isReg
+                ? 'Crea Account Famiglia'
+                : 'Accedi a KinRadar';
+        }
+
+        document.getElementById('tab-login').addEventListener('click', () => setAuthMode('login'));
+        document.getElementById('tab-register').addEventListener('click', () => setAuthMode('register'));
+
+        function showAuthScreen(show) {
+            document.getElementById('auth-overlay').classList.toggle('hidden', !show);
+            if (!show) {
+                setTimeout(() => map.invalidateSize(), 120);
+            }
+        }
+
+        // --- ACCOUNT LOCALE (SENZA FIREBASE) ---
+        function getLocalAccounts() {
+            return JSON.parse(localStorage.getItem(KEYS.localAccounts) || '{}');
+        }
+
+        function saveLocalAccounts(accounts) {
+            localStorage.setItem(KEYS.localAccounts, JSON.stringify(accounts));
+        }
+
+        function handleLocalAuth(email, password, isRegister) {
+            const normalizedEmail = email.trim().toLowerCase();
+            const accounts = getLocalAccounts();
+
+            if (isRegister) {
+                if (accounts[normalizedEmail]) {
+                    showToast('Esiste già un account locale con questa email');
+                    return;
+                }
+                const nameInput = document.getElementById('auth-name').value.trim();
+                const familyInput = normalizeFamilyCode(document.getElementById('auth-family').value);
+                const colorInput = document.getElementById('auth-color').value || '#2563eb';
+
+                const uid = 'local_' + btoa(normalizedEmail).replace(/[^a-zA-Z0-9]/g, '').slice(0, 14);
+                const account = {
+                    uid,
+                    email: normalizedEmail,
+                    password,
+                    name: nameInput || normalizedEmail.split('@')[0],
+                    familyCode: familyInput,
+                    color: colorInput
+                };
+                accounts[normalizedEmail] = account;
+                saveLocalAccounts(accounts);
+                activateSession(account, false);
+                showToast('Account locale creato');
+            } else {
+                const existing = accounts[normalizedEmail];
+                if (!existing || existing.password !== password) {
+                    showToast('Email o password non validi (oppure usa "Entra in Demo")');
+                    return;
+                }
+                activateSession(existing, false);
+                showToast(`Bentornato, ${existing.name}`);
+            }
+        }
+
+        // Accesso immediato in modalità Demo / Locale
+        document.getElementById('btn-demo-entry').addEventListener('click', () => {
+            const demoAccount = {
+                uid: 'demo_marco',
+                email: 'marco@famiglia.it',
+                name: 'Marco',
+                familyCode: 'famiglia-rossi',
+                color: '#2563eb'
+            };
+            activateSession(demoAccount, false);
+            showToast('Modalità Demo attiva');
+        });
+
+        // --- CONFIGURAZIONE E CONNESSIONE FIREBASE ---
+        function fillCloudInputs() {
+            if (!cloudConfig) return;
+            document.getElementById('cfg-api-key').value = cloudConfig.apiKey || '';
+            document.getElementById('cfg-auth-domain').value = cloudConfig.authDomain || '';
+            document.getElementById('cfg-db-url').value = cloudConfig.databaseURL || '';
+            document.getElementById('cfg-project-id').value = cloudConfig.projectId || '';
+        }
+
+        document.getElementById('btn-save-cloud').addEventListener('click', () => {
+            const apiKey = document.getElementById('cfg-api-key').value.trim();
+            const authDomain = document.getElementById('cfg-auth-domain').value.trim();
+            const databaseURL = document.getElementById('cfg-db-url').value.trim().replace(/\/$/, '');
+            const projectId = document.getElementById('cfg-project-id').value.trim();
+
+            if (!apiKey || !databaseURL) {
+                showToast('Inserisci almeno API Key e Database URL');
+                return;
+            }
+
+            cloudConfig = { apiKey, authDomain, databaseURL, projectId };
+            localStorage.setItem(KEYS.cloudCfg, JSON.stringify(cloudConfig));
+            setupFirebase();
+            showToast('Configurazione Firebase salvata');
+        });
+
+        function setupFirebase() {
+            const hasConfig = Boolean(cloudConfig && cloudConfig.apiKey && cloudConfig.databaseURL);
+            document.getElementById('mode-pill').textContent = hasConfig ? 'Cloud Firebase' : 'Modalità Locale';
+            document.getElementById('mode-pill').className = hasConfig
+                ? 'px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800'
+                : 'px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800';
+
+            if (!hasConfig) {
+                isCloudMode = false;
+                return;
+            }
+
+            try {
+                const appName = 'kinradar_app_' + (cloudConfig.projectId || 'default');
+                const app = initializeApp(cloudConfig, appName);
+                fbAuth = getAuth(app);
+                fbDb = getDatabase(app);
+                isCloudMode = true;
+
+                onAuthStateChanged(fbAuth, async user => {
+                    if (user) {
+                        const userRef = ref(fbDb, `users/${user.uid}`);
+                        const snap = await get(userRef);
+                        const regName = sessionStorage.getItem('kinradar_reg_name');
+                        const regFamily = sessionStorage.getItem('kinradar_reg_family');
+                        const regColor = sessionStorage.getItem('kinradar_reg_color');
+                        sessionStorage.removeItem('kinradar_reg_name');
+                        sessionStorage.removeItem('kinradar_reg_family');
+                        sessionStorage.removeItem('kinradar_reg_color');
+
+                        const saved = snap.exists() ? snap.val() : {};
+                        const profileData = {
+                            uid: user.uid,
+                            email: user.email,
+                            name: regName || saved.name || user.email.split('@')[0],
+                            familyCode: normalizeFamilyCode(regFamily || saved.familyCode || 'famiglia-rossi'),
+                            color: regColor || saved.color || '#2563eb'
+                        };
+
+                        await set(userRef, profileData);
+                        activateSession(profileData, true);
+                    } else if (currentSession && currentSession.cloud) {
+                        currentSession = null;
+                        localStorage.removeItem(KEYS.activeSession);
+                        stopRealtimeSync();
+                        showAuthScreen(true);
+                    }
+                });
+            } catch (err) {
+                isCloudMode = false;
+                showToast('Errore nell’inizializzazione di Firebase');
+            }
+        }
+
+        // --- SUBMIT FORM LOGIN / REGISTRAZIONE ---
+        document.getElementById('auth-form').addEventListener('submit', async e => {
+            e.preventDefault();
+            const email = document.getElementById('auth-email').value.trim();
+            const password = document.getElementById('auth-password').value;
+
+            if (isCloudMode && fbAuth) {
+                try {
+                    if (authTab === 'register') {
+                        sessionStorage.setItem('kinradar_reg_name', document.getElementById('auth-name').value.trim());
+                        sessionStorage.setItem('kinradar_reg_family', document.getElementById('auth-family').value.trim());
+                        sessionStorage.setItem('kinradar_reg_color', document.getElementById('auth-color').value);
+                        await createUserWithEmailAndPassword(fbAuth, email, password);
+                        showToast('Account creato con successo');
+                    } else {
+                        await signInWithEmailAndPassword(fbAuth, email, password);
+                        showToast('Accesso effettuato');
+                    }
+                } catch (err) {
+                    showToast('Accesso fallito: controlla email, password o regole Firebase');
+                }
+            } else {
+                handleLocalAuth(email, password, authTab === 'register');
+            }
+        });
+
+        // --- ATTIVAZIONE SESSIONE E SINCRONIZZAZIONE ---
+        function activateSession(profileData, cloud) {
+            currentSession = { ...profileData, cloud };
+            localStorage.setItem(KEYS.activeSession, JSON.stringify(currentSession));
+            showAuthScreen(false);
+            updateHeaderUI();
+            startFamilyListener();
+            startGpsTracking();
+            renderFamilyView();
+        }
+
+        function updateHeaderUI() {
+            if (!currentSession) return;
+            document.getElementById('header-family').textContent = currentSession.familyCode;
+            document.getElementById('header-mode').textContent = currentSession.cloud ? 'Cloud' : 'Locale';
+            document.getElementById('header-user-name').textContent = currentSession.name;
+            document.getElementById('header-user-dot').style.backgroundColor = currentSession.color || '#2563eb';
+            updateShareButtonUI();
+        }
+
+        function stopRealtimeSync() {
+            if (fbUnsubscribe) {
+                fbUnsubscribe();
+                fbUnsubscribe = null;
+            }
+            if (gpsWatchId !== null) {
+                navigator.geolocation.clearWatch(gpsWatchId);
+                gpsWatchId = null;
+            }
+            familyPositions = {};
+            markersLayer.clearLayers();
+        }
+
+        function startFamilyListener() {
+            if (fbUnsubscribe) {
+                fbUnsubscribe();
+                fbUnsubscribe = null;
+            }
+            if (!currentSession) return;
+
+            if (currentSession.cloud && fbDb) {
+                const famRef = ref(fbDb, `families/${currentSession.familyCode}/locations`);
+                fbUnsubscribe = onValue(famRef, snap => {
+                    familyPositions = snap.val() || {};
+                    renderFamilyView();
+                });
+            } else {
+                // In modalità locale mostra i familiari di esempio attorno alla posizione corrente (o Roma come base)
+                const baseLat = typeof myCoords.lat === 'number' ? myCoords.lat : 41.9028;
+                const baseLng = typeof myCoords.lng === 'number' ? myCoords.lng : 12.4964;
+                familyPositions = {};
+                DEMO_FAMILY_PEERS.forEach(peer => {
+                    familyPositions[peer.uid] = {
+                        uid: peer.uid,
+                        name: peer.name,
+                        color: peer.color,
+                        lat: baseLat + peer.offsetLat,
+                        lng: baseLng + peer.offsetLng,
+                        updatedAt: peer.updatedAt
+                    };
+                });
+                renderFamilyView();
+            }
+        }
+
+        function publishMyPosition() {
+            if (!currentSession || !sharingEnabled) return;
+            if (typeof myCoords.lat !== 'number' || typeof myCoords.lng !== 'number') return;
+
+            const payload = {
+                uid: currentSession.uid,
+                name: currentSession.name,
+                color: currentSession.color,
+                lat: myCoords.lat,
+                lng: myCoords.lng,
+                updatedAt: myCoords.updatedAt
+            };
+
+            if (currentSession.cloud && fbDb) {
+                set(ref(fbDb, `families/${currentSession.familyCode}/locations/${currentSession.uid}`), payload);
+            } else {
+                familyPositions[currentSession.uid] = payload;
+            }
+        }
+
+        function clearMyRemotePosition() {
+            if (!currentSession) return;
+            if (currentSession.cloud && fbDb) {
+                set(ref(fbDb, `families/${currentSession.familyCode}/locations/${currentSession.uid}`), null);
+            } else {
+                delete familyPositions[currentSession.uid];
+            }
+        }
+
+        // --- GEOLOCALIZZAZIONE GPS ---
+        function startGpsTracking() {
+            if (gpsWatchId !== null) {
+                navigator.geolocation.clearWatch(gpsWatchId);
+                gpsWatchId = null;
+            }
+
+            const dot = document.getElementById('gps-indicator');
+            const statusEl = document.getElementById('header-gps-text');
+
+            if (!sharingEnabled) {
+                dot.className = 'w-2.5 h-2.5 rounded-full bg-amber-400 shrink-0';
+                statusEl.textContent = 'Condivisione in pausa';
+                clearMyRemotePosition();
+                renderFamilyView();
+                return;
+            }
+
+            if (!('geolocation' in navigator)) {
+                dot.className = 'w-2.5 h-2.5 rounded-full bg-rose-500 shrink-0';
+                statusEl.textContent = 'GPS non supportato dal browser';
+                return;
+            }
+
+            dot.className = 'w-2.5 h-2.5 rounded-full bg-blue-400 shrink-0';
+            statusEl.textContent = 'Rilevamento posizione...';
+
+            gpsWatchId = navigator.geolocation.watchPosition(
+                pos => {
+                    myCoords = {
+                        lat: pos.coords.latitude,
+                        lng: pos.coords.longitude,
+                        accuracy: Math.round(pos.coords.accuracy),
+                        updatedAt: Date.now()
+                    };
+
+                    dot.className = 'w-2.5 h-2.5 rounded-full gps-pulse-active shrink-0';
+                    statusEl.textContent = `GPS attivo (±${myCoords.accuracy} m)`;
+
+                    if (!hasCenteredMap) {
+                        map.setView([myCoords.lat, myCoords.lng], 15);
+                        hasCenteredMap = true;
+                    }
+
+                    if (!currentSession.cloud) {
+                        startFamilyListener();
+                    }
+                    publishMyPosition();
+                    renderFamilyView();
+                },
+                () => {
+                    dot.className = 'w-2.5 h-2.5 rounded-full bg-rose-500 shrink-0';
+                    statusEl.textContent = 'Permesso GPS negato o non disponibile';
+                    showToast('Consenti l’accesso alla posizione per condividere il GPS');
+                },
+                { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+            );
+        }
+
+        // --- RENDER MAPPA E LISTA FAMILIARI ---
+        function renderFamilyView() {
+            if (!currentSession) return;
+
+            const combined = { ...familyPositions };
+            if (sharingEnabled && typeof myCoords.lat === 'number' && typeof myCoords.lng === 'number') {
+                combined[currentSession.uid] = {
+                    uid: currentSession.uid,
+                    name: currentSession.name,
+                    color: currentSession.color,
+                    lat: myCoords.lat,
+                    lng: myCoords.lng,
+                    updatedAt: myCoords.updatedAt,
+                    isSelf: true
+                };
+            }
+
+            const members = Object.values(combined).filter(
+                m => typeof m.lat === 'number' && typeof m.lng === 'number'
+            );
+
+            // Aggiorna marcatori sulla mappa
+            markersLayer.clearLayers();
+            members.forEach(m => {
+                const isSelf = m.uid === currentSession.uid;
+                const displayName = isSelf ? `${m.name} (Tu)` : m.name;
+                const pinColor = m.color || '#2563eb';
+
+                const icon = L.divIcon({
+                    className: '',
+                    html: `<div class="kin-pin" style="background:${pinColor}"><span>${(displayName[0] || '?').toUpperCase()}</span></div>`,
+                    iconSize: [38, 38],
+                    iconAnchor: [19, 38],
+                    popupAnchor: [0, -34]
+                });
+
+                const marker = L.marker([m.lat, m.lng], { icon })
+                    .bindPopup(`
+                        <div class="text-xs font-sans">
+                            <div class="font-bold text-slate-900 text-sm">${displayName}</div>
+                            <div class="text-slate-500 mt-0.5">${formatLastSeen(m.updatedAt)}</div>
+                        </div>
+                    `)
+                    .addTo(markersLayer);
+
+                marker.on('click', () => map.setView([m.lat, m.lng], 16));
+            });
+
+            // Aggiorna contatore e lista nel pannello inferiore
+            document.getElementById('members-count-sub').textContent = members.length
+                ? `${members.length} ${members.length === 1 ? 'posizione visibile' : 'posizioni visibili'} • Tocca per centrare`
+                : 'Nessuna posizione visibile al momento';
+
+            const listEl = document.getElementById('members-list');
+            if (!members.length) {
+                listEl.innerHTML = `
+                    <div class="rounded-2xl bg-slate-50 border border-slate-200 p-4 text-xs text-slate-600">
+                        Attiva la condivisione GPS oppure attendi che un familiare apra KinRadar con lo stesso codice famiglia.
+                    </div>
+                `;
+                return;
+            }
+
+            listEl.innerHTML = members.map(m => {
+                const isSelf = m.uid === currentSession.uid;
+                const distText = !isSelf && typeof myCoords.lat === 'number'
+                    ? formatDistance(myCoords.lat, myCoords.lng, m.lat, m.lng)
+                    : (isSelf ? 'La tua posizione' : '');
+                const lastSeenText = formatLastSeen(m.updatedAt);
+                const navUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(m.lat)},${encodeURIComponent(m.lng)}`;
+
+                return `
+                    <div data-focus-lat="${m.lat}" data-focus-lng="${m.lng}" class="member-row flex items-center justify-between gap-3 p-3 rounded-2xl bg-slate-50 hover:bg-slate-100 border border-slate-200/80 transition cursor-pointer">
+                        <div class="flex items-center gap-3 min-w-0">
+                            <div class="w-10 h-10 rounded-full text-white font-extrabold text-sm flex items-center justify-center shrink-0 shadow-sm" style="background:${m.color || '#2563eb'}">
+                                ${(m.name[0] || '?').toUpperCase()}
+                            </div>
+                            <div class="min-w-0">
+                                <p class="text-sm font-bold text-slate-900 truncate">
+                                    ${isSelf ? `${m.name} <span class="text-xs font-semibold text-blue-600">(Tu)</span>` : m.name}
+                                </p>
+                                <p class="text-xs text-slate-500 truncate">
+                                    ${[distText, lastSeenText].filter(Boolean).join(' • ')}
+                                </p>
+                            </div>
+                        </div>
+                        ${!isSelf ? `
+                            <a href="${navUrl}" target="_blank" rel="noopener noreferrer" class="nav-link-btn px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shrink-0 shadow-sm transition">
+                                Naviga
+                            </a>
+                        ` : ''}
+                    </div>
+                `;
+            }).join('');
+
+            // Delegazione click per centrare sulla mappa senza bloccare il link Naviga
+            listEl.querySelectorAll('.member-row').forEach(row => {
+                row.addEventListener('click', ev => {
+                    if (ev.target.closest('.nav-link-btn')) return;
+                    const lat = parseFloat(row.dataset.focusLat);
+                    const lng = parseFloat(row.dataset.focusLng);
+                    if (!Number.isNaN(lat) && !Number.isNaN(lng)) {
+                        map.setView([lat, lng], 16);
+                    }
+                });
+            });
+        }
+
+        // --- CONTROLLI CENTRA SU DI ME & TOGGLE CONDIVISIONE ---
+        document.getElementById('btn-center-me').addEventListener('click', () => {
+            if (typeof myCoords.lat === 'number' && typeof myCoords.lng === 'number') {
+                map.setView([myCoords.lat, myCoords.lng], 16);
+                showToast('Centrato sulla tua posizione');
+            } else {
+                showToast('Posizione GPS non ancora rilevata');
+            }
+        });
+
+        function updateShareButtonUI() {
+            const btn = document.getElementById('btn-toggle-share');
+            if (sharingEnabled) {
+                btn.textContent = 'Condivisione: ON';
+                btn.className = 'px-3.5 py-2 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 hover:bg-emerald-200 transition cursor-pointer';
+            } else {
+                btn.textContent = 'Condivisione: OFF';
+                btn.className = 'px-3.5 py-2 rounded-full text-xs font-bold bg-rose-100 text-rose-800 hover:bg-rose-200 transition cursor-pointer';
+            }
+        }
+
+        document.getElementById('btn-toggle-share').addEventListener('click', () => {
+            sharingEnabled = !sharingEnabled;
+            localStorage.setItem(KEYS.sharePref, String(sharingEnabled));
+            updateShareButtonUI();
+            startGpsTracking();
+            showToast(sharingEnabled ? 'Condivisione posizione attivata' : 'Condivisione posizione in pausa');
+        });
+
+        // --- MODALE PROFILO & ACCOUNT ---
+        const profileModal = document.getElementById('profile-modal');
+
+        document.getElementById('btn-open-profile').addEventListener('click', () => {
+            if (!currentSession) return;
+            document.getElementById('profile-account-info').textContent =
+                `Account: ${currentSession.email} (${currentSession.cloud ? 'Cloud Firebase' : 'Locale'})`;
+            document.getElementById('edit-profile-name').value = currentSession.name;
+            document.getElementById('edit-profile-family').value = currentSession.familyCode;
+            document.getElementById('edit-profile-color').value = currentSession.color || '#2563eb';
+            profileModal.classList.remove('hidden');
+        });
+
+        document.getElementById('btn-close-profile').addEventListener('click', () => {
+            profileModal.classList.add('hidden');
+        });
+
+        document.getElementById('profile-form').addEventListener('submit', async e => {
+            e.preventDefault();
+            if (!currentSession) return;
+
+            const oldFamily = currentSession.familyCode;
+            const newName = document.getElementById('edit-profile-name').value.trim() || currentSession.name;
+            const newFamily = normalizeFamilyCode(document.getElementById('edit-profile-family').value);
+            const newColor = document.getElementById('edit-profile-color').value || '#2563eb';
+
+            currentSession.name = newName;
+            currentSession.familyCode = newFamily;
+            currentSession.color = newColor;
+            localStorage.setItem(KEYS.activeSession, JSON.stringify(currentSession));
+
+            if (!currentSession.cloud) {
+                const accounts = getLocalAccounts();
+                if (accounts[currentSession.email]) {
+                    accounts[currentSession.email].name = newName;
+                    accounts[currentSession.email].familyCode = newFamily;
+                    accounts[currentSession.email].color = newColor;
+                    saveLocalAccounts(accounts);
+                }
+            } else if (fbDb) {
+                await update(ref(fbDb, `users/${currentSession.uid}`), {
+                    name: newName,
+                    familyCode: newFamily,
+                    color: newColor
+                });
+                if (oldFamily !== newFamily) {
+                    await set(ref(fbDb, `families/${oldFamily}/locations/${currentSession.uid}`), null);
+                }
+            }
+
+            profileModal.classList.add('hidden');
+            updateHeaderUI();
+            startFamilyListener();
+            publishMyPosition();
+            renderFamilyView();
+            showToast('Profilo aggiornato');
+        });
+
+        document.getElementById('btn-switch-account').addEventListener('click', async () => {
+            profileModal.classList.add('hidden');
+            if (currentSession && currentSession.cloud && fbAuth) {
+                await clearMyRemotePosition();
+                await signOut(fbAuth);
+            }
+            stopRealtimeSync();
+            currentSession = null;
+            localStorage.removeItem(KEYS.activeSession);
+            showAuthScreen(true);
+        });
+
+        document.getElementById('btn-logout').addEventListener('click', async () => {
+            profileModal.classList.add('hidden');
+            if (currentSession && currentSession.cloud && fbAuth) {
+                await clearMyRemotePosition();
+                await signOut(fbAuth);
+            }
+            stopRealtimeSync();
+            currentSession = null;
+            localStorage.removeItem(KEYS.activeSession);
+            showAuthScreen(true);
+            showToast('Sei uscito dall’account');
+        });
+
+        // --- AVVIO INIZIALE ---
+        fillCloudInputs();
+        setupFirebase();
+
+        if (!isCloudMode) {
+            if (currentSession) {
+                activateSession(currentSession, false);
+            } else {
+                showAuthScreen(true);
+            }
+        }
+
+        // Aggiornamento periodico di "ultimo aggiornamento" e sincronizzazione
+        setInterval(() => {
+            if (!currentSession) return;
+            if (!currentSession.cloud && sharingEnabled) {
+                startFamilyListener();
+            }
+            renderFamilyView();
+        }, 15000);
+    </script>
+</body>
+</html>
